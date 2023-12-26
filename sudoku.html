@@ -1,0 +1,323 @@
+<head>
+    <style>
+        #boardElem {
+            display: grid;
+            grid-template-rows: repeat(9, 1fr);
+            grid-template-columns: repeat(9, 1fr);
+            grid-gap: 0px;
+            width: 81vmin;
+            height: 81vmin;
+        }
+        #boardElem > div {
+            border: 1px solid black;
+            position: relative;
+        }
+        #boardElem div {
+            width: 9vmin;
+            height: 9vmin;
+            font-size: 9vmin;
+        }
+        #boardElem > div span {
+            font-size: 2vmin;
+            padding: 1vmin;
+            position: absolute;
+            cursor: pointer;
+        }
+
+        #boardElem span:nth-child(1) { top: 0; left: 0; }
+        #boardElem span:nth-child(2) { top: 0; left: 50%; transform: translate(-50%); }
+        #boardElem span:nth-child(3) { top: 0; right: 0; }
+        #boardElem span:nth-child(4) { top: 50%; left: 0; transform: translate(0,-50%); }
+        #boardElem span:nth-child(5) { top: 50%; left: 50%; transform: translate(-50%,-50%); }
+        #boardElem span:nth-child(6) { top: 50%; right: 0; transform: translate(0,-50%); }
+        #boardElem span:nth-child(7) { bottom: 0; left: 0; }
+        #boardElem span:nth-child(8) { bottom: 0; left: 50%; transform: translate(-50%); }
+        #boardElem span:nth-child(9) { bottom: 0; right: 0; }
+
+        #boardElem > div:nth-child(3n) {
+            border-right: 5px solid black;
+        }
+        #boardElem > div:nth-child(1),#boardElem > div:nth-child(10),#boardElem > div:nth-child(19),
+        #boardElem > div:nth-child(28),#boardElem > div:nth-child(37),#boardElem > div:nth-child(46),
+        #boardElem > div:nth-child(55),#boardElem > div:nth-child(64),#boardElem > div:nth-child(73) {
+            border-left: 5px solid black;
+        }
+        #boardElem > div:nth-child(27n+27),#boardElem > div:nth-child(27n+26),#boardElem > div:nth-child(27n+25),
+        #boardElem > div:nth-child(27n+24),#boardElem > div:nth-child(27n+23),#boardElem > div:nth-child(27n+22),
+        #boardElem > div:nth-child(27n+21),#boardElem > div:nth-child(27n+20),#boardElem > div:nth-child(27n+19) {
+            border-bottom: 5px solid black;
+        }
+        #boardElem > div:nth-child(1),#boardElem > div:nth-child(2),#boardElem > div:nth-child(3),
+        #boardElem > div:nth-child(4),#boardElem > div:nth-child(5),#boardElem > div:nth-child(6),
+        #boardElem > div:nth-child(7),#boardElem > div:nth-child(8),#boardElem > div:nth-child(9) {
+            border-top: 5px solid black;
+        }
+    </style>
+</head>
+<body>
+<div id="boardElem"></div>
+<div style="bottom:0;position:absolute;z-index:9999">
+    <button onclick="board.step(50)">Step</button>
+    <button onclick="board.guess()">Guess</button>
+    <button onclick="setInterval(() => board.step(10), 10*15)">Run</button>
+</div>
+<script>
+    const createBoard = () => {
+        const createCell = () => {
+            const elem = document.createElement('div');
+            const content = document.createElement('div');
+            const subelems = [];
+            const cell = { potential: [], val: '', update: function() {
+                content.textContent = this.val;
+                subelems.forEach(x => x.style.display = 'none');
+                this.potential.forEach(x => {
+                    subelems[x-1].style.display = '';
+                })
+                if (this.init) elem.style.background = 'gainsboro';
+            } };
+            boardElem.append(elem);
+            for (let i = 1; i <= 9; ++i) {
+                const subelem = document.createElement('span');
+                subelem.textContent = i;
+                subelem.onclick = () => cell.update(cell.potential = cell.potential.filter(x => x !== i));
+                elem.append(subelem);
+                subelems.push(subelem);
+            }
+            elem.append(content);
+            return cell;
+        };
+
+        const index = (x,y) => y*9+x;
+        const sindex = (x,y) => (y/3|0)*3+x/3|0;
+        const cells = [];
+        const rows = Array(9).fill(0).map(x => []);
+        const cols = Array(9).fill(0).map(x => []);
+        const squares = Array(9).fill(0).map(x => []);
+        for (let i = 0; i < 9; ++i) {
+            for (let j = 0; j < 9; ++j) {
+                const cell = createCell();
+                cells.push(cell);
+                rows[i].push(cell);
+                cols[j].push(cell);
+                squares[sindex(j,i)].push(cell);
+            }
+        }
+
+        const all = () => [1,2,3,4,5,6,7,8,9];
+
+        const sleep = ms => ms > 10 ? 0 : new Promise(res => setTimeout(res, ms));
+        const stack = [];
+        let prev = [[],[]];
+        const stats = { guesses: 0, comparisons: 0, passes: 0 };
+        return {
+            cells,
+            guess: () => {
+                const pick = () => cells.findIndex(x => x.potential.length === 2);
+
+                const chosen = pick();
+                const pot = cells[chosen].potential;
+                const s = cells.map(x => x.potential.slice());
+                cells[chosen].potential = [pot[0]];
+                s[chosen] = [pot[1]];
+                cells[chosen].update();
+                stack.push([s,cells.map(x => x.val)]);
+                ++stats.guesses;
+            },
+            set: (x,y,v) => {
+                const cell = cells[index(x,y)];
+                cell.potential = [];
+                cell.val = v;
+                cell.update();
+            },
+            valid: () => {
+                const valid = cells => {
+                    for (let area of cells) {
+                        if (area.filter(x => !x.val && !x.potential.length).length) return false;
+                        for (let i = 1; i <= 9; ++i) {
+                            if (area.filter(x => x.val == i).length > 1) return false;
+                        }
+                    }
+                    return true;
+                };
+                return valid(rows) && valid(cols) && valid(squares);
+            },
+            changed: () => {
+                const res = prev[0].every((x,i) => x.every(y => cells[i].potential.includes(y))) && prev[1].every((x,i) => cells[i].val === x);
+                prev = [cells.map(x => x.potential.slice()),cells.map(x => x.val)];
+                return !res;
+            },
+            complete: function () { return cells.every(x => x.val) && this.valid(); },
+            loadTemplate: function(template) { template.split('\n').slice(1).map((x,i) => x.split('').map((x,j) => this.set(j,i,cells[index(j,i)].init = x.trim()))) },
+            getassoc: function(x,y) {
+                const set = new Set();
+                const assoc = squares[sindex(x,y)].concat(rows[y]).concat(cols[x]);
+                assoc.forEach(x => set.add(x.val|0));
+                return set;
+            },
+            init: function() {
+                for (let i = 0; i < 9; ++i) {
+                    for (let j = 0; j < 9; ++j) {
+                        const cell = cells[index(i,j)];
+                        if (cell.val) continue;
+                        const assoc = this.getassoc(i,j);
+                        cell.potential = all().filter(x => !assoc.has(x));
+                        cell.update();
+                    }
+                }
+            },
+            step: async function(ms) {
+                if (!this.valid()) {
+                    const _s = stack.pop();
+                    if (!_s) return console.log('invalid');
+                    const [s,v] = _s;
+                    s.forEach((x,i) => cells[i].potential = x);
+                    v.forEach((x,i) => cells[i].val = x);
+                }
+                if (this.complete()) return console.log('complete', stats);
+                if (!this.changed()) this.guess();
+
+                const removesame = cells => {
+                    for (let i = 0; i < 9; ++i) {
+                        const potentials = {};
+                        for (let j = 0; j < 9; ++j) {
+                            const cell = cells[i][j];
+                            if (cell.val) continue;
+                            (potentials[cell.potential] ??= [cell.potential]).push(j);
+                        }
+                        Object.keys(potentials).forEach(x => {
+                            const remove = potentials[x][0];
+                            const exclude = potentials[x].slice(1);
+                            if (remove.length !== exclude.length) return;
+                            for (let j = 0; j < 9; ++j) {
+                                if (exclude.includes(j)) continue;
+                                const cell = cells[i][j];
+                                cell.potential = cell.potential.filter(x => !remove.includes(x));
+                                cell.update();
+                            }
+                        });
+                    }
+                };
+                const removeonlyline = cells => {
+                    for (let i = 0; i < 9; ++i) {
+                        const potentials = {};
+                        for (let j = 0; j < 9; ++j) {
+                            const cell = cells[i][j];
+                            if (cell.val) (potentials[cell.val] ??= []).push(j);
+                            cell.potential.forEach(x => (potentials[x] ??= []).push(j));
+                        }
+                        Object.keys(potentials).forEach(x => {
+                            if (potentials[x].length !== 1) return;
+                            const cell = cells[i][potentials[x][0]];
+                            cell.val = x;
+                            cell.potential = [];
+                            cell.update();
+                        });
+                    }
+                };
+                const removecrsquareintersect = cells => {
+                    for (let i = 0; i < 9; ++i) {
+                        const square = squares[i];
+                        const potentials = {};
+                        for (let j = 0; j < 9; ++j) {
+                            const cell = square[j];
+                            if (cell.val) continue;
+                            cell.potential.forEach(x => (potentials[x] ??= []).push(cell));
+                        }
+                        Object.keys(potentials).forEach(x => {
+                            const match = cells.find(y => potentials[x].every(z => y.find(y => y === z)));
+                            if (match) {
+                                match
+                                    .filter(y => !potentials[x].find(z => y === z))
+                                    .forEach(y => {
+                                        y.potential = y.potential.filter(y => y != x);
+                                        y.update();
+                                    });
+                            }
+                        });
+                    }
+                };
+
+                const smallestgrouping = cells => {
+                    const subsetof = (a,b) => a.every(x => b.includes(x));
+                    for (const area of cells) {
+                        const groups = [];
+                        const pgroups = area.map(x => x.potential).sort((a,b) => b.length - a.length).filter(x => x.length).map(x => [1,x]);
+                        for (let i = pgroups.length; i--;) {
+                            const a = pgroups[i];
+                            if (a[0] === a[1].length) { groups.push(pgroups.splice(i, 1)[0]); continue; }
+                            for (let j = i-1; j >= 0; --j) {
+                                const b = pgroups[j];
+                                if (subsetof(a[1],b[1])) {
+                                    b[0] = a[0]+b[0];
+                                    pgroups.splice(i, 1);
+                                    i = pgroups.length;
+                                    break;
+                                }
+                            }
+                        }
+                        for (const [,vals] of groups) {
+                            for (const cell of area) {
+                                if (subsetof(cell.potential,vals)) continue;
+                                cell.potential = cell.potential.filter(x => !vals.includes(x));
+                                cell.update();
+                            }
+                        }
+                    }
+                };
+
+                //removecrsquareintersect(rows);
+                //await sleep(ms);
+                //removecrsquareintersect(cols);
+                //await sleep(ms);
+                
+                removesame(rows);
+                await sleep(ms);
+                removesame(cols);
+                await sleep(ms);
+                removesame(squares);
+                await sleep(ms);
+
+                removeonlyline(rows);
+                await sleep(ms);
+                removeonlyline(cols);
+                await sleep(ms);
+                removeonlyline(squares);
+                await sleep(ms);
+
+                smallestgrouping(rows);
+                await sleep(ms);
+                smallestgrouping(cols);
+                await sleep(ms);
+                smallestgrouping(squares);
+                await sleep(ms);
+
+                for (let i = 0; i < 9; ++i) { // Reduce individual
+                    for (let j = 0; j < 9; ++j) {
+                        const cell = cells[index(i,j)];
+                        if (cell.val) continue;
+                        if (cell.potential.length === 1) {
+                            this.set(i,j,cell.potential[0]);
+                        }
+                        else {
+                            const assoc = this.getassoc(i,j);
+                            const potential = all().filter(x => !assoc.has(x));
+                            cell.potential = cell.potential.filter(x => potential.includes(x));
+                        }
+                        cell.update();
+                    }
+                }
+                ++stats.passes;
+            }
+        }
+    };
+    const board = createBoard();
+    const templates = {
+        easy: ['\n    189  \n     5  6\n    43   \n5  4 7  3\n 6  8  7 \n  19 26 8\n  432  1 \n25    3  \n9   5 74 '],
+        hard: ['\n 3 87 59 \n 2   5   \n         \n  7  8 36\n51      9\n    341  \n 412     \n  23   6 \n    5   3'],
+        evil: ['\n7   6 1 2\n1  27  53\n4 58   7 \n9     5  \n  2      \n    43   \n    5    \n  8    3 \n2      47']
+    };
+    board.loadTemplate(templates.hard[0]);
+    board.init();
+
+</script>
+</body>
