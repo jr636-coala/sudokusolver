@@ -96,10 +96,17 @@
         for (let i = 0; i < 9; ++i) {
             for (let j = 0; j < 9; ++j) {
                 const cell = createCell();
+                const sq = sindex(j,i);
+                cell.y = i;
+                cell.x = j;
+                cell.sq = sq;
                 cells.push(cell);
-                rows[i].push(cell);
-                cols[j].push(cell);
-                squares[sindex(j,i)].push(cell);
+                rows[cell.y].push(cell);
+                cols[cell.x].push(cell);
+                squares[sq].push(cell);
+                cell.row = rows[cell.y];
+                cell.col = cols[cell.x];
+                cell.square = squares[sq];
             }
         }
 
@@ -107,20 +114,31 @@
 
         const sleep = ms => ms > 10 ? 0 : new Promise(res => setTimeout(res, ms));
         const stack = [];
-        let prev = [[],[]];
+        let prev;
         const stats = { guesses: 0, comparisons: 0, passes: 0 };
+        const queue = { cells: cells.slice(), rows: rows.map(x => x.slice()), cols: cols.map(x => x.slice()), squares: squares.map(x => x.slice()) };
+        const removeFromQueue = index => {
+            const [cell] = queue.cells.splice(index, 1);
+            queue.rows[cell.y].splice(queue.rows.findIndex(x => x === cell));
+            queue.cols[cell.x].splice(queue.cols.findIndex(x => x === cell));
+            queue.squares[cell.sq].splice(queue.squares.findIndex(x => x === cell));
+        }
         return {
             cells,
             guess: () => {
-                const pick = () => cells.findIndex(x => x.potential.length === 2);
-
+                const pick = () => {
+                    const potamounts = cells.map(x => x.potential).flat().reduce((acc,x) => (acc[x] = (acc[x]|0)+1, acc), {});
+                    const score = ([a,b]) => potamounts[a] + potamounts[b];
+                    const [pick] = cells.filter(x => x.potential.length === 2).sort((a,b) => score(b.potential)-score(a.potential));
+                    return index(pick.x,pick.y);
+                }
                 const chosen = pick();
-                const pot = cells[chosen].potential;
+                const [p0,p1] = cells[chosen].potential;
                 const s = cells.map(x => x.potential.slice());
-                cells[chosen].potential = [pot[0]];
-                s[chosen] = [pot[1]];
+                cells[chosen].potential = [p0];
+                s[chosen] = [p1];
                 cells[chosen].update();
-                stack.push([s,cells.map(x => x.val)]);
+                stack.push([s,cells.map(x => x.val),{ cells: queue.cells.slice() }]);
                 ++stats.guesses;
             },
             set: (x,y,v) => {
@@ -142,7 +160,7 @@
                 return valid(rows) && valid(cols) && valid(squares);
             },
             changed: () => {
-                const res = prev[0].every((x,i) => x.every(y => cells[i].potential.includes(y))) && prev[1].every((x,i) => cells[i].val === x);
+                const res = prev && prev[0].every((x,i) => x.every(y => cells[i].potential.includes(y))) && prev[1].every((x,i) => cells[i].val === x);
                 prev = [cells.map(x => x.potential.slice()),cells.map(x => x.val)];
                 return !res;
             },
@@ -155,88 +173,47 @@
                 return set;
             },
             init: function() {
-                for (let i = 0; i < 9; ++i) {
-                    for (let j = 0; j < 9; ++j) {
-                        const cell = cells[index(i,j)];
-                        if (cell.val) continue;
-                        const assoc = this.getassoc(i,j);
-                        cell.potential = all().filter(x => !assoc.has(x));
-                        cell.update();
-                    }
+                for (let n = queue.cells.length; n--;) {
+                    const cell = cells[n];
+                    ++stats.comparisons;
+                    if (cell.val) { removeFromQueue(n); continue; }
+                    const assoc = this.getassoc(cell.x,cell.y);
+                    cell.potential = all().filter(x => !assoc.has(x));
+                    cell.update();
                 }
             },
             step: async function(ms) {
+                if (this.complete()) return console.log('complete', stats);
                 if (!this.valid()) {
                     const _s = stack.pop();
                     if (!_s) return console.log('invalid');
-                    const [s,v] = _s;
+                    const [s,v,q] = _s;
                     s.forEach((x,i) => cells[i].potential = x);
                     v.forEach((x,i) => cells[i].val = x);
+                    queue.cells = q.cells;
                 }
-                if (this.complete()) return console.log('complete', stats);
                 if (!this.changed()) this.guess();
-
-                const removesame = cells => {
-                    for (let i = 0; i < 9; ++i) {
-                        const potentials = {};
-                        for (let j = 0; j < 9; ++j) {
-                            const cell = cells[i][j];
-                            if (cell.val) continue;
-                            (potentials[cell.potential] ??= [cell.potential]).push(j);
-                        }
-                        Object.keys(potentials).forEach(x => {
-                            const remove = potentials[x][0];
-                            const exclude = potentials[x].slice(1);
-                            if (remove.length !== exclude.length) return;
-                            for (let j = 0; j < 9; ++j) {
-                                if (exclude.includes(j)) continue;
-                                const cell = cells[i][j];
-                                cell.potential = cell.potential.filter(x => !remove.includes(x));
-                                cell.update();
-                            }
-                        });
-                    }
-                };
+                
                 const removeonlyline = cells => {
                     for (let i = 0; i < 9; ++i) {
                         const potentials = {};
                         for (let j = 0; j < 9; ++j) {
                             const cell = cells[i][j];
+                            ++stats.comparisons;
                             if (cell.val) (potentials[cell.val] ??= []).push(j);
                             cell.potential.forEach(x => (potentials[x] ??= []).push(j));
                         }
                         Object.keys(potentials).forEach(x => {
                             if (potentials[x].length !== 1) return;
                             const cell = cells[i][potentials[x][0]];
+                            ++stats.comparisons;
                             cell.val = x;
                             cell.potential = [];
                             cell.update();
                         });
                     }
                 };
-                const removecrsquareintersect = cells => {
-                    for (let i = 0; i < 9; ++i) {
-                        const square = squares[i];
-                        const potentials = {};
-                        for (let j = 0; j < 9; ++j) {
-                            const cell = square[j];
-                            if (cell.val) continue;
-                            cell.potential.forEach(x => (potentials[x] ??= []).push(cell));
-                        }
-                        Object.keys(potentials).forEach(x => {
-                            const match = cells.find(y => potentials[x].every(z => y.find(y => y === z)));
-                            if (match) {
-                                match
-                                    .filter(y => !potentials[x].find(z => y === z))
-                                    .forEach(y => {
-                                        y.potential = y.potential.filter(y => y != x);
-                                        y.update();
-                                    });
-                            }
-                        });
-                    }
-                };
-
+                
                 const smallestgrouping = cells => {
                     const subsetof = (a,b) => a.every(x => b.includes(x));
                     for (const area of cells) {
@@ -246,17 +223,18 @@
                             const a = pgroups[i];
                             if (a[0] === a[1].length) { groups.push(pgroups.splice(i, 1)[0]); continue; }
                             for (let j = i-1; j >= 0; --j) {
+                                ++stats.comparisons;
                                 const b = pgroups[j];
                                 if (subsetof(a[1],b[1])) {
                                     b[0] = a[0]+b[0];
                                     pgroups.splice(i, 1);
-                                    i = pgroups.length;
                                     break;
                                 }
                             }
                         }
                         for (const [,vals] of groups) {
                             for (const cell of area) {
+                                ++stats.comparisons;
                                 if (subsetof(cell.potential,vals)) continue;
                                 cell.potential = cell.potential.filter(x => !vals.includes(x));
                                 cell.update();
@@ -265,18 +243,6 @@
                     }
                 };
 
-                //removecrsquareintersect(rows);
-                //await sleep(ms);
-                //removecrsquareintersect(cols);
-                //await sleep(ms);
-                
-                removesame(rows);
-                await sleep(ms);
-                removesame(cols);
-                await sleep(ms);
-                removesame(squares);
-                await sleep(ms);
-
                 removeonlyline(rows);
                 await sleep(ms);
                 removeonlyline(cols);
@@ -284,27 +250,25 @@
                 removeonlyline(squares);
                 await sleep(ms);
 
-                smallestgrouping(rows);
+                smallestgrouping(queue.rows);
                 await sleep(ms);
-                smallestgrouping(cols);
+                smallestgrouping(queue.cols);
                 await sleep(ms);
-                smallestgrouping(squares);
+                smallestgrouping(queue.squares);
                 await sleep(ms);
 
-                for (let i = 0; i < 9; ++i) { // Reduce individual
-                    for (let j = 0; j < 9; ++j) {
-                        const cell = cells[index(i,j)];
-                        if (cell.val) continue;
-                        if (cell.potential.length === 1) {
-                            this.set(i,j,cell.potential[0]);
-                        }
-                        else {
-                            const assoc = this.getassoc(i,j);
-                            const potential = all().filter(x => !assoc.has(x));
-                            cell.potential = cell.potential.filter(x => potential.includes(x));
-                        }
-                        cell.update();
+                for (let i = queue.cells.length; i--;) {
+                    const cell = queue.cells[i];
+                    ++stats.comparisons;
+                    if (cell.val) { removeFromQueue(i); continue; }
+                    if (cell.potential.length === 1) { this.set(cell.x,cell.y,cell.potential[0]); removeFromQueue(i); }
+                    else {
+                        const assoc = this.getassoc(cell.x,cell.y);
+                        const potential = all().filter(x => !assoc.has(x));
+                        cell.potential = cell.potential.filter(x => potential.includes(x));
+                        if (cell.potential.length === 1) { this.set(cell.x,cell.y,cell.potential[0]); removeFromQueue(i); }
                     }
+                    cell.update();
                 }
                 ++stats.passes;
             }
@@ -316,7 +280,7 @@
         hard: ['\n 3 87 59 \n 2   5   \n         \n  7  8 36\n51      9\n    341  \n 412     \n  23   6 \n    5   3'],
         evil: ['\n7   6 1 2\n1  27  53\n4 58   7 \n9     5  \n  2      \n    43   \n    5    \n  8    3 \n2      47']
     };
-    board.loadTemplate(templates.hard[0]);
+    board.loadTemplate(templates.evil[0]);
     board.init();
 
 </script>
